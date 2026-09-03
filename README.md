@@ -1,5 +1,7 @@
 # Neon Bubble Pop — Omarchy bar plugin
 
+![omarchy-neonbubble](preview.png)
+
 A neon bubble shooter in the [Omarchy](https://omarchy.org) bar, with a **daily
 board**: everyone gets the same puzzle each day, and a score to beat on it.
 
@@ -108,6 +110,14 @@ enough to see:
 ```bash
 omarchy plugin add https://github.com/Snackwrap/omarchy-neonbubble.git --enable
 omarchy bar move com.leafbox.neonbubble right
+```
+
+## Uninstall
+
+```bash
+omarchy plugin disable com.leafbox.neonbubble
+omarchy plugin remove com.leafbox.neonbubble
+omarchy restart shell
 ```
 
 ## Settings
