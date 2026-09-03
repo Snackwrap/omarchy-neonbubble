@@ -26,6 +26,18 @@ shots are usually the ones that go round something rather than at it.
 Every **six shots** the ceiling comes down a row. Let the board reach the dashed
 line and it is over.
 
+**Specials are earned, not dealt.** Every eleven bubbles you take off the board
+fills the meter under the gun, and the next bubble loaded is either a **bomb**,
+which clears everything it touches whatever the colour, or a **wildcard**, which
+becomes the colour that makes the biggest cluster where it lands. That is the
+colour that makes the biggest *cluster*, not the one it touches most of — a
+wildcard beside one bubble of a colour that is part of a run of six should join
+the six.
+
+**Stars** are worth 900 and marked with a turning ring. Two sit on the opening
+board, and the ceiling brings more down. They arrive at the top, which is the
+one part of the board that otherwise gives you no reason to shoot.
+
 The colour in the gun is only ever one still on the board, so a shot is never
 wasted on a colour that cannot match.
 
@@ -73,6 +85,17 @@ enough to see:
   times — a colour you cannot ever clear is not a puzzle.
 - **The aim guide describes the path the shot takes**, drawn from the same
   numbers, so it cannot promise a bounce the bubble will not make.
+- **A bomb drops what it cut loose**, the same as a pop does — it takes a
+  different path through the code, so it is checked separately.
+- **A wildcard resolves to a colour that exists**, and joins the largest cluster
+  available rather than the first neighbour it looked at.
+- **The star grid stays the same shape and length as the board** through every
+  descent. Shifting one without the other keeps the alignment correct and grows
+  the array forever, which nothing else would notice.
+- **Both earned features are actually reachable.** Random play has to fire
+  specials and collect stars, or they are decoration: stars used to come back
+  once in three hundred games, because they only ever entered at the top row
+  and nobody clears the top. Two on the opening board took that to 118.
 
 ## Requirements
 

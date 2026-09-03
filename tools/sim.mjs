@@ -38,7 +38,7 @@ function playGame(seed, opts = {}) {
   const stats = {
     shots: 0, pops: 0, drops: 0, descends: 0, cleared: 0,
     floatingSeen: 0, deadColorDealt: 0, overflowMissed: 0,
-    stuckAiming: 0, score: 0, frames: 0,
+    stuckAiming: 0, score: 0, frames: 0, specialsFired: 0, starsTaken: 0,
   }
 
   let frames = 0
@@ -53,14 +53,21 @@ function playGame(seed, opts = {}) {
     }
     if (s.phase !== "aim") { stats.stuckAiming++; break }
 
-    // The colour about to be fired must exist on the board, or it is a shot
-    // the player cannot possibly use.
+    // What was actually fired must have been matchable when it left the gun.
+    // Checked on the bubble in flight rather than on `current` before the step,
+    // because the engine re-deals a colour that died between being dealt and
+    // being fired — reading the pre-step value reports that correction as the
+    // very fault it is correcting.
     const live = G.gridColors(s.grid, s.parity)
-    if (live.length && !live.includes(s.current)) stats.deadColorDealt++
+    const special = s.currentKind && s.currentKind !== "normal"
+    if (special) stats.specialsFired++
 
     s = G.step(s, FRAME, false, false, true)
     frames++
     stats.shots++
+
+    if (s.flying && (!s.flying.kind || s.flying.kind === "normal")
+        && live.length && !live.includes(s.flying.color)) stats.deadColorDealt++
 
     let settle = 0
     while (s.phase === "fly" && settle++ < 400) { s = G.step(s, FRAME, false, false, false); frames++ }
@@ -70,6 +77,7 @@ function playGame(seed, opts = {}) {
       if (e === "drop") stats.drops++
       if (e === "descend") stats.descends++
       if (e === "cleared") stats.cleared++
+      if (e === "star") stats.starsTaken++
     }
 
     const floats = floatingCount(s)
@@ -91,7 +99,8 @@ const argv = process.argv.slice(2)
 const GAMES = 300
 const totals = { shots: 0, pops: 0, drops: 0, descends: 0, cleared: 0,
                  floatingSeen: 0, deadColorDealt: 0, overflowMissed: 0,
-                 stuckAiming: 0, frames: 0, bestScore: 0 }
+                 stuckAiming: 0, frames: 0, bestScore: 0,
+                 specialsFired: 0, starsTaken: 0 }
 for (let g = 0; g < GAMES; g++) {
   const { stats } = playGame(g * 7919 + 13)
   for (const k of Object.keys(totals)) {
@@ -111,6 +120,8 @@ for (const [k, v] of [
   ["unmatchable colours dealt", totals.deadColorDealt],
   ["overflows that did not end the game", totals.overflowMissed],
   ["games that jammed while aiming", totals.stuckAiming],
+  ["specials fired", totals.specialsFired],
+  ["stars collected", totals.starsTaken],
   ["best score", totals.bestScore],
 ]) console.log(`  ${String(v).padStart(8)}  ${k}`)
 
@@ -126,10 +137,15 @@ if (argv.includes("--check")) {
   ok(totals.pops > GAMES, `only ${totals.pops} pops across ${GAMES} games — is anything matching?`)
   ok(totals.drops > 0, "no cluster ever detached — is findFloating doing anything?")
   ok(totals.descends > 0, "the ceiling never came down")
+  // Both of these are earned, so if random play never sees one the feature is
+  // decoration. Stars used to come back 1 in 300 games, which is not a feature.
+  ok(totals.specialsFired > GAMES / 4, `only ${totals.specialsFired} specials fired across ${GAMES} games`)
+  ok(totals.starsTaken > GAMES / 8, `only ${totals.starsTaken} stars collected across ${GAMES} games`)
 
   for (const m of checkGeometry()) fail(m)
   for (const m of checkDaily()) fail(m)
   for (const m of checkRules()) fail(m)
+  for (const m of checkSpecials()) fail(m)
 
   console.log(bad ? `\n${bad} FAILED\n` : "\nall checks passed\n")
   process.exit(bad ? 1 : 0)
@@ -207,6 +223,105 @@ function checkDaily() {
     for (const col of Object.keys(counts)) if (counts[col] < G.POP_MIN) thin++
   }
   ok(thin === 0, `${thin} daily boards hold a colour fewer than ${G.POP_MIN} times`)
+  return fails
+}
+
+// Specials and stars. The thing that matters most here is that neither can
+// leave the board in a state the ordinary rules would not have produced —
+// a bomb clearing a hole without dropping what sat on top of it is the same
+// bug as a pop that forgets to, and it is worth checking separately because
+// it goes through a different path.
+function checkSpecials() {
+  const fails = []
+  const ok = (c, m) => { if (!c) fails.push(m) }
+  const blank = (rows) => {
+    const s = G.create(1234, { daily: false, rows: rows === undefined ? 1 : rows })
+    for (let r = 0; r < G.boardRows(); r++)
+      for (let c = 0; c < G.boardRowLen(r, s.parity); c++) s.grid[r][c] = null
+    return s
+  }
+
+  // The meter has to fill from clearing, and load a special when it does.
+  let s = G.create(4242, { daily: false })
+  ok(s.currentKind === "normal" && s.nextKind === "normal",
+     "a new game must not start with a special loaded")
+  s.charge = G.CHARGE_NEED
+  const kind = G.takeSpecial(s)
+  ok(kind === G.BOMB || kind === G.WILD, `a full meter must load a special, got ${kind}`)
+  ok(s.charge === 0, "loading a special must spend the meter")
+  ok(G.takeSpecial(s) === "normal", "an empty meter must load a normal bubble")
+
+  // A bomb takes out what it touches whatever the colour, and drops whatever
+  // that was holding up.
+  s = blank()
+  s.grid[0][2] = "pink"; s.grid[0][3] = "cyan"; s.grid[0][4] = "gold"
+  s.grid[1][2] = "violet"; s.grid[1][3] = "lime"
+  const before = G.countBubbles(s.grid, s.parity)
+  const sc0 = s.score
+  G.land(s, { r: 1, c: 3 }, "pink", G.BOMB)
+  const after = G.countBubbles(s.grid, s.parity)
+  ok(after < before, `a bomb must remove bubbles, ${before} -> ${after}`)
+  ok(s.score > sc0, "a bomb must score")
+  ok(G.findFloating(s.grid, s.parity).length === 0,
+     "a bomb must drop whatever it cut loose")
+
+  // A wildcard picks the colour that makes the biggest cluster, not the one it
+  // touches most. Here it touches one pink and one cyan, but the cyan is part
+  // of a run of three, so joining the cyan is the shot that pays.
+  s = blank()
+  s.grid[0][2] = "cyan"; s.grid[0][3] = "cyan"; s.grid[0][4] = "cyan"
+  s.grid[1][1] = "pink"; s.grid[1][0] = "pink"
+  const wildBefore = G.countBubbles(s.grid, s.parity)
+  G.land(s, { r: 1, c: 2 }, "gold", G.WILD)
+  ok((s.events || []).includes("pop"),
+     "a wildcard that can complete a cluster must pop it")
+  ok(G.countBubbles(s.grid, s.parity) < wildBefore,
+     `a wildcard must clear bubbles, ${wildBefore} -> ${G.countBubbles(s.grid, s.parity)}`)
+  ok(s.grid[0][2] === null && s.grid[0][3] === null && s.grid[0][4] === null,
+     "the wildcard must have joined the cyan run rather than the pink pair")
+
+  // With nothing to touch it still has to be a colour that exists.
+  s = blank()
+  s.grid[0][0] = "lime"
+  G.land(s, { r: 0, c: 4 }, "gold", G.WILD)
+  const placed = s.grid[0][4]
+  ok(placed === null || G.boardColors().includes(placed),
+     `a lone wildcard must resolve to a real colour, got ${placed}`)
+
+  // Stars ride down with the ceiling and stay attached to their bubble.
+  s = G.create(99, { daily: false })
+  let seenStar = false
+  for (let i = 0; i < 40 && !seenStar; i++) {
+    G.dropCeiling(s)
+    for (let c = 0; c < G.boardRowLen(0, s.parity); c++) if (s.stars[0][c]) seenStar = true
+  }
+  ok(seenStar, "the ceiling must eventually bring a star down")
+
+  // The star grid must stay the same shape as the colour grid, or a descent
+  // silently drops a column of flags.
+  s = G.create(7, { daily: false })
+  for (let i = 0; i < 12; i++) {
+    G.dropCeiling(s)
+    // Length as well as shape: a descent that unshifts without popping keeps
+    // the alignment correct and grows the array forever, which nothing else
+    // here would notice.
+    ok(s.stars.length === G.boardRows(),
+       `after ${i + 1} descents the star grid is ${s.stars.length} rows, board is ${G.boardRows()}`)
+    for (let r = 0; r < G.boardRows(); r++) {
+      ok(s.stars[r].length === G.boardRowLen(r, s.parity),
+         `star row ${r} is ${s.stars[r].length} long, board row is ${G.boardRowLen(r, s.parity)}`)
+    }
+  }
+
+  // Popping a star pays the bonus, once.
+  s = blank()
+  s.grid[0][1] = "pink"; s.grid[0][2] = "pink"
+  s.stars[0][1] = true
+  const sc1 = s.score
+  G.land(s, { r: 0, c: 3 }, "pink")
+  ok(s.score >= sc1 + G.STAR_SCORE, "popping a star must pay the bonus")
+  ok(!s.stars[0][1], "a popped star must be cleared from the star grid")
+
   return fails
 }
 

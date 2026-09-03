@@ -36,6 +36,7 @@ Item {
   readonly property real shake: { var _ = root.tick; return gameState ? Engine.boardShake(gameState) : 0 }
   readonly property real flash: { var _ = root.tick; return gameState ? Engine.boardFlash(gameState) : 0 }
   readonly property real pressure: { var _ = root.tick; return gameState ? Engine.boardPressure(gameState) : 0 }
+  readonly property real charge: { var _ = root.tick; return gameState ? Engine.boardCharge(gameState) : 0 }
 
   function px(x) { return originX + (x + root.shake) * sc }
   function py(y) { return originY + y * sc }
@@ -162,6 +163,59 @@ Item {
         ctx.globalAlpha = 1
       }
 
+      // A star, drawn over its bubble: a turning ring of spokes. It has to be
+      // legible at a glance from across the board, because the whole point of
+      // it is to be worth changing your shot for.
+      function starMark(cx, cy, rr, spin) {
+        ctx.save()
+        ctx.globalAlpha = 0.9
+        ctx.strokeStyle = "#FFF3C4"
+        ctx.lineWidth = Math.max(1.2, rr * 0.11)
+        ctx.beginPath()
+        ctx.arc(cx, cy, rr * 0.55, 0, Math.PI * 2)
+        ctx.stroke()
+        for (var k = 0; k < 6; k++) {
+          var a2 = spin + k * Math.PI / 3
+          ctx.beginPath()
+          ctx.moveTo(cx + Math.cos(a2) * rr * 0.62, cy + Math.sin(a2) * rr * 0.62)
+          ctx.lineTo(cx + Math.cos(a2) * rr * 1.0, cy + Math.sin(a2) * rr * 1.0)
+          ctx.stroke()
+        }
+        ctx.restore()
+      }
+
+      // A bomb reads as a ring of ticks; a wildcard as a rosette of every
+      // colour it could become. Neither is a letter, because a letter in a
+      // 30-pixel circle is a smudge.
+      function kindMark(cx, cy, rr, kind, spin) {
+        ctx.save()
+        if (kind === "bomb") {
+          ctx.strokeStyle = "#FFFFFF"
+          ctx.lineWidth = Math.max(1.3, rr * 0.13)
+          ctx.beginPath()
+          ctx.arc(cx, cy, rr * 0.42, 0, Math.PI * 2)
+          ctx.stroke()
+          for (var b2 = 0; b2 < 8; b2++) {
+            var ab = spin * 0.5 + b2 * Math.PI / 4
+            ctx.beginPath()
+            ctx.moveTo(cx + Math.cos(ab) * rr * 0.58, cy + Math.sin(ab) * rr * 0.58)
+            ctx.lineTo(cx + Math.cos(ab) * rr * 0.82, cy + Math.sin(ab) * rr * 0.82)
+            ctx.stroke()
+          }
+        } else if (kind === "wild") {
+          var names = Engine.boardColors()
+          for (var w2 = 0; w2 < names.length; w2++) {
+            var a3 = spin + w2 * Math.PI * 2 / names.length
+            ctx.fillStyle = root.tint(names[w2])
+            ctx.beginPath()
+            ctx.arc(cx + Math.cos(a3) * rr * 0.46, cy + Math.sin(a3) * rr * 0.46,
+                    rr * 0.24, 0, Math.PI * 2)
+            ctx.fill()
+          }
+        }
+        ctx.restore()
+      }
+
       // The aim guide, from the same numbers the shot uses.
       if (s.phase === "aim") {
         var path = Engine.aimPath(s, 110)
@@ -200,8 +254,10 @@ Item {
           var v = s.grid[r][c]
           if (!v) continue
           var puff = 1 + 0.035 * Math.sin(wave + r * 0.55 + c * 0.32)
-          bubble(root.px(Engine.boardCellX(r, c, s.parity)),
-                 root.py(Engine.boardCellY(r)), root.tint(v), 1, puff)
+          var bx = root.px(Engine.boardCellX(r, c, s.parity))
+          var by = root.py(Engine.boardCellY(r))
+          bubble(bx, by, root.tint(v), 1, puff)
+          if (Engine.boardStarAt(s, r, c)) starMark(bx, by, root.pr(R) * puff, root.tick * 0.045)
         }
       }
 
@@ -243,7 +299,12 @@ Item {
       }
       ctx.globalAlpha = 1
 
-      if (s.flying) bubble(root.px(s.flying.x), root.py(s.flying.y), root.tint(s.flying.color))
+      if (s.flying) {
+        var fx2 = root.px(s.flying.x), fy2 = root.py(s.flying.y)
+        bubble(fx2, fy2, root.tint(s.flying.color))
+        if (s.flying.kind && s.flying.kind !== "normal")
+          kindMark(fx2, fy2, root.pr(R), s.flying.kind, root.tick * 0.12)
+      }
 
       // The line the board must not cross, drawn louder the closer it gets.
       var dy = root.py(Engine.boardDeathY())
@@ -279,8 +340,25 @@ Item {
       ctx.arc(sx, sy, root.pr(R * 1.5), Math.PI, 0)
       ctx.stroke()
 
-      if (!s.flying) bubble(sx, sy, root.tint(s.current))
-      bubble(sx + root.pr(R * 3.1), sy + root.pr(R * 0.2), root.tint(s.next), 0.6, 0.62)
+      if (!s.flying) {
+        bubble(sx, sy, root.tint(s.current))
+        if (s.currentKind && s.currentKind !== "normal")
+          kindMark(sx, sy, root.pr(R), s.currentKind, root.tick * 0.12)
+      }
+      var nx2 = sx + root.pr(R * 3.1), ny2 = sy + root.pr(R * 0.2)
+      bubble(nx2, ny2, root.tint(s.next), 0.6, 0.62)
+      if (s.nextKind && s.nextKind !== "normal")
+        kindMark(nx2, ny2, root.pr(R) * 0.62, s.nextKind, root.tick * 0.12)
+
+      // The charge meter, drawn along the barrel side of the gun. It fills
+      // from bubbles cleared, so it doubles as a readout of how well the last
+      // few shots went.
+      var mw = root.pr(R * 5.2), mh = Math.max(2, root.pr(2.4))
+      var mx = sx - mw / 2, my = sy + root.pr(R * 1.9)
+      ctx.fillStyle = root.rgba(Palette.cyanDim, 0.7)
+      ctx.fillRect(mx, my, mw, mh)
+      ctx.fillStyle = root.charge >= 1 ? Palette.gold : Palette.cyanBright
+      ctx.fillRect(mx, my, mw * root.charge, mh)
 
       var horizon = ctx.createLinearGradient(x0, y1 - h * 0.22, x0, y1)
       horizon.addColorStop(0, "rgba(0,0,0,0)")

@@ -14,8 +14,10 @@ Item {
   // answers for every key on Object.prototype, so `allowedSfx["constructor"]`
   // is a Function and passes a truthiness check.
   readonly property var allowedSfx: ({
-    cleared: true, descend: true, drop: true, fire: true,
-    gameover: true, pop: true, start: true, stick: true, wall: true
+    bomb: true, charged: true, cleared: true, descend: true,
+    drop: true, fire: true, gameover: true, pop: true,
+    star: true, star_in: true, start: true, stick: true,
+    wall: true, wild: true
   })
 
   function isSfx(name) {

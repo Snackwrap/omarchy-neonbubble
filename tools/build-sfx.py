@@ -64,6 +64,15 @@ if __name__ == "__main__":
     write_wav("wall", tone(420, 22, 0.12))
     # The ceiling coming down: the pressure sound, so it descends.
     write_wav("descend", chirp(400, 130, 260, 0.3) + tone(130, 120, 0.2))
+    # The meter filling: a short rising two-note, so you know without looking.
+    write_wav("charged", tone(660, 60, 0.26) + tone(990, 90, 0.28))
+    # A bomb going off is the loudest thing on the board.
+    write_wav("bomb", noise(60, 0.28) + chirp(300, 90, 260, 0.34) + tone(90, 120, 0.22))
+    # A wildcard deciding what it is.
+    write_wav("wild", chirp(520, 1560, 150, 0.3) + tone(1560, 70, 0.22))
+    # A star arriving, and a star collected — the second is the reward.
+    write_wav("star_in", tone(1320, 70, 0.18) + tone(1760, 60, 0.16))
+    write_wav("star", chirp(880, 2640, 220, 0.36) + tone(2200, 110, 0.28))
     write_wav("start", chirp(220, 880, 180, 0.3))
     write_wav("gameover", chirp(660, 165, 220, 0.26) + tone(165, 140, 0.2))
     # Clearing the board is the best thing that can happen here.

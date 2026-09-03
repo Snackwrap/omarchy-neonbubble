@@ -37,6 +37,27 @@ var CLEAR_BONUS = 4000
 
 var COLORS = ["pink", "cyan", "gold", "violet", "lime"]
 
+// Specials are earned, not dealt at random: every CHARGE_NEED bubbles you take
+// off the board loads one into the gun. That makes a big clear worth building
+// toward rather than a lucky draw, and it keeps the daily board fair — the
+// charge comes from what you actually cleared, so the same play earns the same
+// specials for everybody.
+var CHARGE_NEED = 11
+var BOMB_SCORE = 90
+var WILD = "wild"
+var BOMB = "bomb"
+
+// Stars ride down with the ceiling. They are worth having and they are at the
+// top, which is the one place the board otherwise gives you no reason to shoot.
+var STAR_CHANCE = 0.55           // per descent, at most one star
+var STAR_SCORE = 900
+// Two on the starting board as well. Arriving only with the ceiling, a star
+// spends its life in the top rows, which are the last thing anybody clears:
+// across 300 games 495 of them came down and exactly one was ever collected.
+// Seeding a couple into the opening board is what makes the mechanic something
+// the player meets in the first minute rather than in theory.
+var START_STARS = 2
+
 // Sparks, and the two short-lived numbers the renderer reads to shake and
 // flash. Capped, because a long chain spawns from every popped cell at once
 // and an uncapped burst quietly becomes thousands of objects.
@@ -82,6 +103,41 @@ function inGrid(r, c, parity) {
 function cellAt(grid, r, c, parity) {
   if (!inGrid(r, c, parity)) return null
   return grid[r][c]
+}
+
+// Deterministic from the same seed as the board, so the daily puzzle places
+// its stars in the same cells for everyone.
+function buildStars(seed, rows, parity) {
+  var g = emptyStars(parity)
+  var rnd = mulberry32((seed ^ 0x9e3779b9) | 0)
+  var n = Math.max(1, Math.min(rows || START_ROWS, ROWS - 4))
+  var placed = 0
+  for (var attempt = 0; attempt < 60 && placed < START_STARS; attempt++) {
+    // The lower half of the opening board: high enough to be worth a shot,
+    // low enough to be reachable before the game is over.
+    var r = Math.floor(n / 2) + Math.floor(rnd() * Math.ceil(n / 2))
+    if (r >= n) continue
+    var c = Math.floor(rnd() * rowLen(r, parity))
+    if (g[r][c]) continue
+    g[r][c] = true
+    placed++
+  }
+  return g
+}
+
+function emptyStars(parity) {
+  var g = []
+  for (var r = 0; r < ROWS; r++) {
+    var row = []
+    for (var c = 0; c < rowLen(r, parity); c++) row.push(false)
+    g.push(row)
+  }
+  return g
+}
+
+function starAt(state, r, c) {
+  if (!state.stars || !inGrid(r, c, state.parity)) return false
+  return !!state.stars[r][c]
 }
 
 function emptyGrid(parity) {
@@ -267,6 +323,7 @@ function create(seed, opts) {
     daily: o.daily !== false,
     parity: parity,
     grid: buildBoard(s, o.rows || START_ROWS, parity),
+    stars: buildStars(s, o.rows || START_ROWS, parity),
     rnd: mulberry32(s ^ 0x5bf03635),
     phase: "aim",
     score: 0,
@@ -278,6 +335,9 @@ function create(seed, opts) {
     falling: [],
     current: null,
     next: null,
+    currentKind: "normal",
+    nextKind: "normal",
+    charge: 0,
     lastLanded: null,
     combo: 0,
     particles: [],
@@ -293,16 +353,40 @@ function create(seed, opts) {
   return snapshot(state)
 }
 
+// If the meter is full, the bubble going into the gun is a special and the
+// meter resets. Which special is drawn from the game's own seeded generator, so
+// a given board plays out the same way for everybody.
+function takeSpecial(state) {
+  if (state.charge < CHARGE_NEED) return "normal"
+  state.charge -= CHARGE_NEED
+  var kind = (state.rnd() < 0.5) ? BOMB : WILD
+  state.events.push("charged")
+  return kind
+}
+
 function fire(state) {
   if (state.phase !== "aim" || state.flying) return false
+
+  // The next bubble is dealt when the previous one is fired, so the shot that
+  // followed can have removed the last of its colour in the meantime. Re-deal
+  // rather than fire a bubble that cannot match anything — it is rare, and it
+  // is exactly the insult the deal is written to avoid.
+  if (state.currentKind === "normal") {
+    var live = gridColors(state.grid, state.parity)
+    if (live.length && live.indexOf(state.current) < 0) state.current = dealColor(state)
+  }
+
   var a = state.angle - Math.PI / 2          // 0 aims straight up
   state.flying = {
     x: SHOOTER_X, y: SHOOTER_Y,
     vx: Math.cos(a) * SHOT_SPEED,
     vy: Math.sin(a) * SHOT_SPEED,
-    color: state.current
+    color: state.current,
+    kind: state.currentKind
   }
+  state.currentKind = state.nextKind
   state.current = state.next
+  state.nextKind = takeSpecial(state)
   state.next = dealColor(state)
   state.phase = "fly"
   state.events.push("fire")
@@ -349,9 +433,78 @@ function updateEffects(state, dt, dtMs) {
 
 // Everything that happens once a bubble comes to rest: the cluster it joined,
 // then whatever that cluster was holding up.
-function land(state, cell, color) {
+// Clearing a set of cells: the sparks, the star bonus and the grid itself.
+// Everything that removes bubbles goes through here so none of those can be
+// forgotten by one caller and not another.
+function clearCells(state, cells, color) {
+  var stars = 0
+  for (var i = 0; i < cells.length; i++) {
+    var cc = cells[i]
+    var col = color || state.grid[cc.r][cc.c]
+    spawnSparks(state, cellX(cc.r, cc.c, state.parity), cellY(cc.r), col, SPARKS_PER_POP)
+    if (starAt(state, cc.r, cc.c)) {
+      stars++
+      state.stars[cc.r][cc.c] = false
+      state.rings.push({ x: cellX(cc.r, cc.c, state.parity), y: cellY(cc.r),
+                         color: "gold", life: 1 })
+    }
+    state.grid[cc.r][cc.c] = null
+  }
+  if (stars > 0) {
+    state.score += stars * STAR_SCORE
+    state.events.push("star")
+  }
+  return cells.length
+}
+
+function land(state, cell, color, kind) {
+  // A wildcard takes the colour of whatever it is touching most of. With
+  // nothing to touch it becomes a colour still on the board, so it can never
+  // be a bubble that cannot match.
+  if (kind === WILD) {
+    // The colour that makes the biggest cluster, not the one it happens to
+    // touch most or first. Counting neighbours is the obvious rule and it is
+    // the wrong one: a wildcard beside one bubble of a colour that is part of
+    // a run of six should join the six, and on a tie the obvious rule picks
+    // whichever the neighbour list reached first, which is arbitrary.
+    var ns = neighbors(cell.r, cell.c, state.parity)
+    var tried = Object.create(null)
+    var bestC = null, bestN = 0
+    for (var t = 0; t < ns.length; t++) {
+      var nv = cellAt(state.grid, ns[t].r, ns[t].c, state.parity)
+      if (!nv || COLORS.indexOf(nv) < 0 || tried[nv]) continue
+      tried[nv] = true
+      state.grid[cell.r][cell.c] = nv
+      var size = findCluster(state.grid, cell.r, cell.c, state.parity).length
+      if (size > bestN) { bestN = size; bestC = nv }
+    }
+    state.grid[cell.r][cell.c] = null
+    color = bestC || dealColor(state)
+    state.events.push("wild")
+  }
+
   state.grid[cell.r][cell.c] = color
   state.lastLanded = { r: cell.r, c: cell.c }
+
+  // A bomb takes out everything it touches, whatever colour it is.
+  if (kind === BOMB) {
+    var blast = [{ r: cell.r, c: cell.c }]
+    var bn = neighbors(cell.r, cell.c, state.parity)
+    for (var b = 0; b < bn.length; b++) {
+      if (cellAt(state.grid, bn[b].r, bn[b].c, state.parity)) blast.push(bn[b])
+    }
+    state.combo++
+    state.score += clearCells(state, blast, color) * BOMB_SCORE * state.combo
+    state.charge += blast.length
+    state.popping = blast.slice(0)
+    state.flashT = FLASH_MS
+    state.shakeT = SHAKE_MS
+    state.shakeMag = 0.7
+    state.events.push("bomb")
+    state.events.push("pop")
+    detachFloaters(state)
+    return
+  }
 
   var cluster = findCluster(state.grid, cell.r, cell.c, state.parity)
   if (cluster.length < POP_MIN) {
@@ -361,23 +514,25 @@ function land(state, cell, color) {
   }
 
   var i
-  for (i = 0; i < cluster.length; i++) {
-    var cc = cluster[i]
-    spawnSparks(state, cellX(cc.r, cc.c, state.parity), cellY(cc.r), color, SPARKS_PER_POP)
-    state.grid[cc.r][cc.c] = null
-  }
+  clearCells(state, cluster, color)
   state.rings.push({
     x: cellX(cell.r, cell.c, state.parity), y: cellY(cell.r),
     color: color, life: 1
   })
   state.combo++
   state.score += cluster.length * POP_SCORE * state.combo
+  state.charge += cluster.length
   state.popping = cluster.slice(0)
   state.flashT = FLASH_MS
   state.events.push("pop")
+  detachFloaters(state)
+}
 
+// Whatever the clear was holding up now falls.
+function detachFloaters(state) {
   var loose = findFloating(state.grid, state.parity)
-  for (i = 0; i < loose.length; i++) {
+  if (!loose.length) return
+  for (var i = 0; i < loose.length; i++) {
     var f = loose[i]
     var fc = state.grid[f.r][f.c]
     spawnSparks(state, cellX(f.r, f.c, state.parity), cellY(f.r), fc, SPARKS_PER_DROP)
@@ -385,12 +540,16 @@ function land(state, cell, color) {
       x: cellX(f.r, f.c, state.parity), y: cellY(f.r),
       vy: 1.4 + (i % 3) * 0.5, color: fc, life: 1
     })
+    if (starAt(state, f.r, f.c)) {
+      state.score += STAR_SCORE
+      state.stars[f.r][f.c] = false
+      state.events.push("star")
+    }
     state.grid[f.r][f.c] = null
   }
-  if (loose.length) {
-    state.score += loose.length * DROP_SCORE * state.combo
-    state.events.push("drop")
-  }
+  state.score += loose.length * DROP_SCORE * state.combo
+  state.charge += loose.length
+  state.events.push("drop")
 }
 
 // The ceiling comes down. Parity flips with the shift so every row keeps its
@@ -398,11 +557,21 @@ function land(state, cell, color) {
 function dropCeiling(state) {
   state.parity = state.parity ? 0 : 1
   state.grid.pop()
+  state.stars.pop()
   var row = []
-  for (var c = 0; c < rowLen(0, state.parity); c++) {
+  var starRow = []
+  var len = rowLen(0, state.parity)
+  for (var c = 0; c < len; c++) {
     row.push(COLORS[Math.floor(state.rnd() * COLORS.length) % COLORS.length])
+    starRow.push(false)
+  }
+  // At most one star per descent, so it stays worth going after.
+  if (state.rnd() < STAR_CHANCE) {
+    starRow[Math.floor(state.rnd() * len) % len] = true
+    state.events.push("star_in")
   }
   state.grid.unshift(row)
+  state.stars.unshift(starRow)
   state.shotsToDrop = DROP_EVERY
   // The ceiling coming down is the pressure in this game, so it is the one
   // thing that moves the whole board.
@@ -484,10 +653,11 @@ function step(state, dtMs, aimLeft, aimRight, wantFire) {
 
       var cell = snapCell(state.grid, state.parity, b.x, b.y)
       var color = b.color
+      var kind = b.kind
       state.flying = null
       state.phase = "aim"
       if (!cell) break
-      land(state, cell, color)
+      land(state, cell, color, kind)
       state.shots++
       state.shotsToDrop--
       if (checkCleared(state)) break
@@ -516,14 +686,18 @@ function snapshot(state) {
     angle: state.angle,
     flying: state.flying
       ? { x: state.flying.x, y: state.flying.y, vx: state.flying.vx,
-          vy: state.flying.vy, color: state.flying.color }
+          vy: state.flying.vy, color: state.flying.color, kind: state.flying.kind }
       : null,
     popping: state.popping.slice(0),
     falling: state.falling.map(function (f) {
       return { x: f.x, y: f.y, vy: f.vy, color: f.color, life: f.life }
     }),
+    stars: state.stars.map(function (row) { return row.slice(0) }),
     current: state.current,
     next: state.next,
+    currentKind: state.currentKind,
+    nextKind: state.nextKind,
+    charge: state.charge,
     lastLanded: state.lastLanded,
     combo: state.combo,
     particles: state.particles.map(function (p) {
@@ -569,6 +743,13 @@ function boardFlash(state) {
 
 // How close the board is to the line, 0 to 1. The renderer uses it to make the
 // warning louder as it gets worse rather than only at the moment it is lost.
+function boardCharge(state) {
+  if (!state) return 0
+  return clamp((state.charge || 0) / CHARGE_NEED, 0, 1)
+}
+
+function boardStarAt(state, r, c) { return starAt(state, r, c) }
+
 function boardPressure(state) {
   if (!state) return 0
   var low = lowestFilledY(state.grid, state.parity)
@@ -646,6 +827,12 @@ function previewState(scene) {
       s.grid[2][c] = null
     }
     s.rings.push({ x: cellX(2, 3, s.parity), y: cellY(2), color: live[0], life: 0.62 })
+    // A star up top, a bomb in the gun and a wildcard queued behind it: the
+    // three things that are not just a coloured circle.
+    s.stars[1][4] = true
+    s.currentKind = BOMB
+    s.nextKind = WILD
+    s.charge = CHARGE_NEED - 2
     s.flashT = FLASH_MS * 0.7
     // Mid-flight, so the sparks are spread rather than all at their origin.
     for (var f = 0; f < 14; f++) updateEffects(s, 1, 16.667)
