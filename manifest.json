@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "com.leafbox.neonbubble",
+  "name": "Neon Bubble Pop",
+  "version": "0.1.0",
+  "author": "Robert (leafbox)",
+  "license": "MIT",
+  "homepage": "https://github.com/Snackwrap/omarchy-neonbubble",
+  "repository": "https://github.com/Snackwrap/omarchy-neonbubble",
+  "description": "A neon bubble shooter in the Omarchy bar, with a daily board: everyone gets the same puzzle each day and a score to beat on it. Aim, bounce off the walls, match three to pop, and cut clusters loose so they fall.",
+  "keywords": [
+    "bubble",
+    "puzzle",
+    "game",
+    "neon",
+    "cyberpunk",
+    "arcade",
+    "daily",
+    "bar",
+    "quickshell"
+  ],
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Neon Bubble Pop",
+    "description": "A bubble shooter with a daily board. Aim, bounce, match three, cut clusters loose.",
+    "category": "Fun",
+    "aliases": [
+      "bubble",
+      "bubblepop",
+      "pop",
+      "puzzle",
+      "game"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "sound": true,
+      "boardMode": "daily",
+      "popupPosition": "icon",
+      "debugPreviewScene": "off",
+      "debugGeometry": false
+    },
+    "schema": [
+      {
+        "key": "sound",
+        "type": "boolean",
+        "label": "Sound effects",
+        "defaultValue": true
+      },
+      {
+        "key": "boardMode",
+        "type": "enum",
+        "label": "Board",
+        "options": [
+          {
+            "value": "daily",
+            "label": "Daily — the same puzzle for everyone, once a day"
+          },
+          {
+            "value": "random",
+            "label": "Random — a fresh board every game"
+          }
+        ],
+        "defaultValue": "daily"
+      },
+      {
+        "key": "popupPosition",
+        "type": "enum",
+        "label": "Popup position",
+        "options": [
+          {
+            "value": "icon",
+            "label": "Under the bar icon"
+          },
+          {
+            "value": "center",
+            "label": "Centered on the bar"
+          }
+        ],
+        "defaultValue": "icon"
+      }
+    ]
+  }
+}
