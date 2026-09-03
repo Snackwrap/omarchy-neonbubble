@@ -27,13 +27,45 @@ Panel {
   property bool lastRecorded: false
   property int lastRecordedScore: -1
 
+  readonly property string pluginId: "com.leafbox.neonbubble"
+
   readonly property string scoresDir:
-    Quickshell.env("HOME") + "/.local/state/omarchy/plugins/com.leafbox.neonbubble"
+    Quickshell.env("HOME") + "/.local/state/omarchy/plugins/" + root.pluginId
   readonly property string scoresPath: scoresDir + "/scores.json"
 
+  // The directory walk is descriptor-relative. Each component is opened with
+  // O_NOFOLLOW | O_DIRECTORY and validated by fstat on that descriptor, and the
+  // next component is opened *through* it as /proc/self/fd/N/<name>, which the
+  // kernel resolves to the inode the descriptor holds rather than re-walking the
+  // path. The temporary file and the rename that publishes it go through that
+  // same descriptor, so the write is bound to the directories that were checked:
+  // an ancestor cannot be a symlink, and cannot be swapped after the check. There
+  // is no reopen by pathname afterwards -- O_EXCL creates the leaf 0600 already.
+  readonly property string walkScript:
+    "my $home = $ENV{HOME} or exit 1;" +
+    "$home =~ s|/+$||;" +
+    "my $id = \"" + root.pluginId + "\";" +
+    "$SIG{ALRM} = sub { exit 1 }; alarm 5;" +
+    "sysopen(my $dh, $home, O_RDONLY | O_DIRECTORY) or exit 1;" +
+    "for my $part ('.local', 'state', 'omarchy', 'plugins', $id) {" +
+    "  my $p = '/proc/self/fd/' . fileno($dh) . \"/$part\"; my $nh;" +
+    "  unless (sysopen($nh, $p, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) {" +
+    "    exit 1 unless $create;" +
+    "    mkdir($p, 0700);" +
+    "    sysopen($nh, $p, O_RDONLY | O_DIRECTORY | O_NOFOLLOW) or exit 1;" +
+    "  }" +
+    "  my @d = stat($nh) or exit 1;" +
+    "  exit 1 unless S_ISDIR($d[2]);" +
+    "  exit 1 unless $d[4] == $<;" +
+    "  exit 1 if ($d[2] & 0022);" +
+    "  close($dh); $dh = $nh;" +
+    "}" +
+    "my $dir = '/proc/self/fd/' . fileno($dh);"
+
   readonly property string safeReadScript:
-    "use strict; use Fcntl qw(:DEFAULT :mode);" +
-    "sysopen(my $fh, $ARGV[0], O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;" +
+    "use strict; use Fcntl qw(:DEFAULT :mode); my $create = 0;" +
+    root.walkScript +
+    "sysopen(my $fh, \"$dir/scores.json\", O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;" +
     "my @s = stat($fh) or exit 1;" +
     "exit 1 unless S_ISREG($s[2]);" +
     "exit 1 unless $s[4] == $<;" +
@@ -43,33 +75,18 @@ Panel {
     "my $buf = \"\"; sysread($fh, $buf, 4096); print $buf;"
 
   readonly property string safeWriteScript:
-    "use strict; use Fcntl qw(:DEFAULT :mode);" +
-    "my ($target, $payload) = @ARGV;" +
-    "my $home = $ENV{HOME} or exit 1;" +
-    "$home =~ s|/+$||;" +
-    "my $root = \"$home/.local/state/omarchy/plugins/com.leafbox.neonbubble\";" +
-    "exit 1 unless defined $target && $target eq \"$root/scores.json\";" +
+    "use strict; use Fcntl qw(:DEFAULT :mode); my $create = 1;" +
+    "my $payload = $ARGV[0];" +
     "exit 1 unless defined $payload;" +
     "exit 1 if length($payload) > 4096;" +
-    "my $path = $home;" +
-    "for my $part ('.local', 'state', 'omarchy', 'plugins', 'com.leafbox.neonbubble') {" +
-    "  $path = \"$path/$part\";" +
-    "  if (-e $path) {" +
-    "    my @d = stat($path) or exit 1;" +
-    "    exit 1 unless -d _;" +
-    "    exit 1 unless $d[4] == $<;" +
-    "    exit 1 if ($d[2] & 0022);" +
-    "  } else { mkdir $path, 0700 or exit 1; }" +
-    "}" +
-    "my $tmp = \"$root/.scores.json.tmp.$$\";" +
+    root.walkScript +
+    "my $tmp = \"$dir/.scores.json.tmp.$$\";" +
     "sysopen(my $fh, $tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600) or exit 1;" +
-    "print $fh $payload or exit 1;" +
-    "close($fh) or exit 1;" +
-    "rename($tmp, $target) or do { unlink $tmp; exit 1; };" +
-    "chmod 0600, $target;"
+    "print $fh $payload or do { close($fh); unlink $tmp; exit 1 };" +
+    "close($fh) or do { unlink $tmp; exit 1 };" +
+    "rename($tmp, \"$dir/scores.json\") or do { unlink $tmp; exit 1 };"
 
   readonly property string perlBin: "/usr/bin/perl"
-  readonly property string timeoutBin: "/usr/bin/timeout"
 
   property int scoresReadStartedMs: 0
   property int scoresSaveStartedMs: 0
@@ -224,8 +241,7 @@ Panel {
     id: scoresSaveProc
     property string payload: ""
     running: false
-    command: [root.timeoutBin, "3", root.perlBin, "-e", root.safeWriteScript,
-              root.scoresPath, payload]
+    command: [root.perlBin, "-e", root.safeWriteScript, "--", payload]
     onExited: {
       root.scoresSaveStartedMs = 0
       if (root.pendingSave.length > 0) {
@@ -239,7 +255,7 @@ Panel {
   Process {
     id: scoresReader
     running: false
-    command: [root.timeoutBin, "2", root.perlBin, "-e", root.safeReadScript, root.scoresPath]
+    command: [root.perlBin, "-e", root.safeReadScript]
     onExited: root.scoresReadStartedMs = 0
     stdout: StdioCollector {
       waitForEnd: true

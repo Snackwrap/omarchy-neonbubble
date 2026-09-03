@@ -8,7 +8,6 @@ Item {
   property int bounceCooldownMs: 60
   property int lastBounceMs: 0
 
-  readonly property string timeoutBin: "/usr/bin/timeout"
   readonly property string paplayBin: "/usr/bin/paplay"
   // Compared against true rather than tested for truthiness: a plain object
   // answers for every key on Object.prototype, so `allowedSfx["constructor"]`
@@ -48,7 +47,7 @@ Item {
   function launch(path) {
     if (sfxProc.running) { pending = path; return }
     pending = ""
-    sfxProc.command = [timeoutBin, "5", paplayBin, "--volume=42000", path]
+    sfxProc.command = [paplayBin, "--volume=42000", path]
     sfxStartedMs = Date.now()
     sfxProc.running = true
   }
@@ -92,7 +91,7 @@ Item {
     running: sfxProc.running
     repeat: true
     onTriggered: {
-      if (root.sfxStartedMs && Date.now() - root.sfxStartedMs > 6000)
+      if (root.sfxStartedMs && Date.now() - root.sfxStartedMs > 5000)
         root.stopAll()
     }
   }

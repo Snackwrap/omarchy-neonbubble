@@ -144,14 +144,26 @@ The high score is the only thing written to disk, and the only reason this
 plugin starts a process at all besides `paplay`. It holds five integers, in
 `~/.local/state/omarchy/plugins/com.leafbox.neonbubble/scores.json`:
 
-- The reader opens it `O_RDONLY | O_NOFOLLOW | O_NONBLOCK` and checks *through
-  that descriptor* that it is a regular file we own, with no extra links, not
-  group- or world-writable, and small.
-- The writer refuses any target but that one literal path, checks every
-  directory on the way down the same way, writes to a temporary opened
-  `O_CREAT | O_EXCL | O_NOFOLLOW` and renames it into place.
-- A save arriving while one is in flight is queued and started from `onExited`,
-  because setting `running = false` does not reap the child.
+- Neither helper takes a path: each derives the one it is allowed to use from
+  `$HOME` and the plugin id.
+- **The directory walk is descriptor-relative.** Every component from `$HOME`
+  down is opened `O_DIRECTORY | O_NOFOLLOW` and validated by `fstat` on *that
+  descriptor*, and the next is opened through it as `/proc/self/fd/N/<name>`,
+  which the kernel resolves to the inode the descriptor holds rather than
+  re-walking the path. The temporary file and the rename that publishes it go
+  through the same descriptor, so an ancestor can be neither a symlink nor
+  swapped after the check. Checking with a pathname `stat` and then opening by
+  pathname validates one set of directories and writes through another.
+- The leaf is created `O_CREAT | O_EXCL | O_NOFOLLOW` at 0600 and renamed into
+  place, and nothing reopens it by pathname afterwards. The reader opens it
+  `O_RDONLY | O_NOFOLLOW | O_NONBLOCK` and checks through the descriptor that it
+  is a regular file we own, with no extra links, not group- or world-writable,
+  and small.
+- **No process here has a child.** The deadline lives inside perl as an `alarm`
+  rather than in a `timeout` wrapper, and `paplay` is started directly, so every
+  process the plugin spawns is a single executable that Quickshell owns and
+  reaps. A save arriving while one is in flight is queued and started from
+  `onExited`, because setting `running = false` does not reap the child.
 - The daily best is stamped with the day it belongs to, so a stale file cannot
   claim today's score.
 
