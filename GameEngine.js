@@ -37,6 +37,15 @@ var CLEAR_BONUS = 4000
 
 var COLORS = ["pink", "cyan", "gold", "violet", "lime"]
 
+// Sparks, and the two short-lived numbers the renderer reads to shake and
+// flash. Capped, because a long chain spawns from every popped cell at once
+// and an uncapped burst quietly becomes thousands of objects.
+var PARTICLE_CAP = 90
+var SPARKS_PER_POP = 7
+var SPARKS_PER_DROP = 4
+var SHAKE_MS = 260
+var FLASH_MS = 220
+
 function deg(d) { return d * Math.PI / 180 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
 
@@ -271,6 +280,11 @@ function create(seed, opts) {
     next: null,
     lastLanded: null,
     combo: 0,
+    particles: [],
+    rings: [],
+    flashT: 0,
+    shakeT: 0,
+    shakeMag: 0,
     events: [],
     tick: 0
   }
@@ -295,6 +309,44 @@ function fire(state) {
   return true
 }
 
+function spawnSparks(state, x, y, color, n) {
+  var room = PARTICLE_CAP - state.particles.length
+  if (room <= 0) return
+  if (n > room) n = room
+  for (var i = 0; i < n; i++) {
+    var a = (i / n) * Math.PI * 2 + state.tick * 0.37
+    var sp = 1.3 + (i % 3) * 0.85
+    state.particles.push({
+      x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.5,
+      color: color, life: 1
+    })
+  }
+}
+
+function updateEffects(state, dt, dtMs) {
+  if (state.flashT > 0) state.flashT = Math.max(0, state.flashT - dtMs)
+  if (state.shakeT > 0) state.shakeT = Math.max(0, state.shakeT - dtMs)
+  var out = []
+  for (var i = 0; i < state.particles.length; i++) {
+    var p = state.particles[i]
+    p.life -= dtMs / 560
+    if (p.life <= 0) continue
+    p.x += p.vx * dt
+    p.y += p.vy * dt
+    p.vy += 0.19 * dt
+    p.vx *= 0.982
+    out.push(p)
+  }
+  state.particles = out
+  var rings = []
+  for (var r = 0; r < state.rings.length; r++) {
+    var g = state.rings[r]
+    g.life -= dtMs / 420
+    if (g.life > 0) rings.push(g)
+  }
+  state.rings = rings
+}
+
 // Everything that happens once a bubble comes to rest: the cluster it joined,
 // then whatever that cluster was holding up.
 function land(state, cell, color) {
@@ -309,18 +361,29 @@ function land(state, cell, color) {
   }
 
   var i
-  for (i = 0; i < cluster.length; i++) state.grid[cluster[i].r][cluster[i].c] = null
+  for (i = 0; i < cluster.length; i++) {
+    var cc = cluster[i]
+    spawnSparks(state, cellX(cc.r, cc.c, state.parity), cellY(cc.r), color, SPARKS_PER_POP)
+    state.grid[cc.r][cc.c] = null
+  }
+  state.rings.push({
+    x: cellX(cell.r, cell.c, state.parity), y: cellY(cell.r),
+    color: color, life: 1
+  })
   state.combo++
   state.score += cluster.length * POP_SCORE * state.combo
   state.popping = cluster.slice(0)
+  state.flashT = FLASH_MS
   state.events.push("pop")
 
   var loose = findFloating(state.grid, state.parity)
   for (i = 0; i < loose.length; i++) {
     var f = loose[i]
+    var fc = state.grid[f.r][f.c]
+    spawnSparks(state, cellX(f.r, f.c, state.parity), cellY(f.r), fc, SPARKS_PER_DROP)
     state.falling.push({
       x: cellX(f.r, f.c, state.parity), y: cellY(f.r),
-      vy: 1.4 + (i % 3) * 0.5, color: state.grid[f.r][f.c], life: 1
+      vy: 1.4 + (i % 3) * 0.5, color: fc, life: 1
     })
     state.grid[f.r][f.c] = null
   }
@@ -341,6 +404,10 @@ function dropCeiling(state) {
   }
   state.grid.unshift(row)
   state.shotsToDrop = DROP_EVERY
+  // The ceiling coming down is the pressure in this game, so it is the one
+  // thing that moves the whole board.
+  state.shakeT = SHAKE_MS
+  state.shakeMag = 1
   state.events.push("descend")
 }
 
@@ -366,6 +433,7 @@ function step(state, dtMs, aimLeft, aimRight, wantFire) {
   if (!state) return state
   state.events = []
   var dt = clamp(dtMs / 16.667, 0.25, 2.5)
+  updateEffects(state, dt, dtMs)
 
   var i
   for (i = state.falling.length - 1; i >= 0; i--) {
@@ -458,6 +526,15 @@ function snapshot(state) {
     next: state.next,
     lastLanded: state.lastLanded,
     combo: state.combo,
+    particles: state.particles.map(function (p) {
+      return { x: p.x, y: p.y, color: p.color, life: p.life }
+    }),
+    rings: state.rings.map(function (g) {
+      return { x: g.x, y: g.y, color: g.color, life: g.life }
+    }),
+    flashT: state.flashT,
+    shakeT: state.shakeT,
+    shakeMag: state.shakeMag,
     events: state.events.slice(0),
     tick: (state.tick || 0) + 1
   }
@@ -476,6 +553,28 @@ function boardDeathY() { return DEATH_Y }
 function shooterX() { return SHOOTER_X }
 function shooterY() { return SHOOTER_Y }
 function boardSeedForDate(y, m, d) { return seedForDate(y, m, d) }
+
+// A decaying oscillation rather than a single offset: a cabinet you shove
+// rocks back. Same shape the pinball table uses, for the same reason.
+function boardShake(state) {
+  if (!state || !state.shakeT) return 0
+  var t = state.shakeT / SHAKE_MS
+  return Math.sin(t * Math.PI * 3.5) * t * 4.5 * (state.shakeMag || 1)
+}
+
+function boardFlash(state) {
+  if (!state || !state.flashT) return 0
+  return clamp(state.flashT / FLASH_MS, 0, 1)
+}
+
+// How close the board is to the line, 0 to 1. The renderer uses it to make the
+// warning louder as it gets worse rather than only at the moment it is lost.
+function boardPressure(state) {
+  if (!state) return 0
+  var low = lowestFilledY(state.grid, state.parity)
+  var from = DEATH_Y - ROW_H * 4
+  return clamp((low - from) / (DEATH_Y - from), 0, 1)
+}
 function boardTodaySeed(now) { return todaySeed(now) }
 
 // The dotted line the player is aiming along, reflected off the side walls the
@@ -542,7 +641,14 @@ function previewState(scene) {
       { x: 132, y: 198, vy: 3.8, color: live[2 % live.length], life: 1 },
       { x: 168, y: 252, vy: 2.0, color: live[0], life: 1 }
     ]
-    for (var c = 2; c < 6 && c < rowLen(2, s.parity); c++) s.grid[2][c] = null
+    for (var c = 2; c < 6 && c < rowLen(2, s.parity); c++) {
+      spawnSparks(s, cellX(2, c, s.parity), cellY(2), live[0], SPARKS_PER_POP)
+      s.grid[2][c] = null
+    }
+    s.rings.push({ x: cellX(2, 3, s.parity), y: cellY(2), color: live[0], life: 0.62 })
+    s.flashT = FLASH_MS * 0.7
+    // Mid-flight, so the sparks are spread rather than all at their origin.
+    for (var f = 0; f < 14; f++) updateEffects(s, 1, 16.667)
     return snapshot(s)
   }
   if (scene === "gameover") {
