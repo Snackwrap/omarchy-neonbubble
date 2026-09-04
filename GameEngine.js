@@ -30,6 +30,43 @@ var AIM_RATE = deg(2.6)              // per frame-unit held
 var DROP_EVERY = 6                   // shots between the ceiling coming down
 var START_ROWS = 5
 
+// The ceiling used to come down every DROP_EVERY shots for the whole run, which
+// meant the game never got harder — a player who survived the first minute had
+// solved it, and the rest was arithmetic. The cadence now tightens one shot
+// every DROP_RAMP shots fired, down to a DROP_FLOOR it never passes, so a long
+// run keeps taking something away.
+//
+// The floor is what stops the ramp becoming a brick wall: below it there is no
+// room left to build a cluster before the ceiling moves again. Three is
+// normal's. Hard deliberately goes to two, which is about as tight as the board
+// stays playable — measured with tools/sim.mjs, where hard still averages 15
+// shots a game against normal's 20 rather than collapsing.
+var DROP_FLOOR = 3
+var DROP_RAMP = 10
+
+// Difficulty is the shape of that curve, and nothing else. It deliberately does
+// not touch the board seed or the colours dealt: the daily board has to stay the
+// same board for everybody, or comparing scores on it stops meaning anything.
+// What changes is how fast the ceiling takes the room away.
+var DIFFICULTIES = {
+  easy:   { dropEvery: 8, dropFloor: 5, dropRamp: 16 },
+  normal: { dropEvery: DROP_EVERY, dropFloor: DROP_FLOOR, dropRamp: DROP_RAMP },
+  hard:   { dropEvery: 4, dropFloor: 2, dropRamp: 7 }
+}
+var DEFAULT_DIFFICULTY = "normal"
+
+function difficultyOf(name) {
+  return DIFFICULTIES[name] ? name : DEFAULT_DIFFICULTY
+}
+
+// The interval the ceiling is currently on. Derived from shots fired rather
+// than stored as a countdown of its own, so it cannot drift out of step with
+// the run and a snapshot carries no extra state to get wrong.
+function dropIntervalFor(state) {
+  var notches = Math.floor(state.shots / state.dropRamp)
+  return Math.max(state.dropFloor, state.dropEvery - notches)
+}
+
 var POP_MIN = 3                      // bubbles of a colour that must touch
 var POP_SCORE = 60
 var DROP_SCORE = 110                 // per bubble detached, worth more
@@ -318,9 +355,18 @@ function create(seed, opts) {
   var s = Math.abs((seed === undefined || seed === null || !isFinite(seed))
     ? todaySeed() : (parseInt(seed, 10) | 0))
   var parity = 0
+  // An unknown name falls back to normal rather than throwing: this comes off a
+  // stored preference, and a file written by a newer build should degrade to a
+  // playable game instead of a broken one.
+  var diff = difficultyOf(o.difficulty)
+  var curve = DIFFICULTIES[diff]
   var state = {
     seed: s,
     daily: o.daily !== false,
+    difficulty: diff,
+    dropEvery: curve.dropEvery,
+    dropFloor: curve.dropFloor,
+    dropRamp: curve.dropRamp,
     parity: parity,
     grid: buildBoard(s, o.rows || START_ROWS, parity),
     stars: buildStars(s, o.rows || START_ROWS, parity),
@@ -328,7 +374,7 @@ function create(seed, opts) {
     phase: "aim",
     score: 0,
     shots: 0,
-    shotsToDrop: DROP_EVERY,
+    shotsToDrop: curve.dropEvery,
     angle: 0,
     flying: null,
     popping: [],
@@ -572,7 +618,7 @@ function dropCeiling(state) {
   }
   state.grid.unshift(row)
   state.stars.unshift(starRow)
-  state.shotsToDrop = DROP_EVERY
+  state.shotsToDrop = dropIntervalFor(state)
   // The ceiling coming down is the pressure in this game, so it is the one
   // thing that moves the whole board.
   state.shakeT = SHAKE_MS
@@ -676,6 +722,13 @@ function snapshot(state) {
   return {
     seed: state.seed,
     daily: state.daily,
+    // The curve rides in the snapshot because step() runs off the object
+    // snapshot() returns. Leave these out and the second shot of every game
+    // computes its cadence from undefined.
+    difficulty: state.difficulty,
+    dropEvery: state.dropEvery,
+    dropFloor: state.dropFloor,
+    dropRamp: state.dropRamp,
     parity: state.parity,
     grid: grid,
     rnd: state.rnd,
