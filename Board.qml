@@ -12,6 +12,7 @@ Item {
   property string gameOverScore: ""
   property string gameOverSession: ""
   property bool gameOverNewBest: false
+  property string difficulty: "normal"
 
   readonly property real boardW: Engine.boardWidth()
   readonly property real boardH: Engine.boardHeight()
@@ -425,7 +426,7 @@ Item {
     }
   }
 
-  MenuAttract { active: root.showAttract }
+  MenuAttract { active: root.showAttract; difficulty: root.difficulty }
   GameOverOverlay {
     active: root.showGameOver
     scoreLine: root.gameOverScore

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "com.leafbox.neonbubble",
   "name": "Neon Bubble Pop",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": "Robert (leafbox)",
   "license": "MIT",
   "homepage": "https://github.com/Snackwrap/omarchy-neonbubble",
@@ -41,6 +41,7 @@
     "defaults": {
       "sound": true,
       "boardMode": "daily",
+      "difficulty": "normal",
       "popupPosition": "icon",
       "debugPreviewScene": "off",
       "debugGeometry": false
@@ -67,6 +68,27 @@
           }
         ],
         "defaultValue": "daily"
+      },
+      {
+        "key": "difficulty",
+        "type": "enum",
+        "label": "Difficulty",
+        "description": "How fast the ceiling comes down. The board itself is identical on every setting, so the daily puzzle stays the same puzzle; only the pressure changes. Bests are kept separately for each.",
+        "options": [
+          {
+            "value": "easy",
+            "label": "Easy — the ceiling drops every 8 shots, tightening to 5"
+          },
+          {
+            "value": "normal",
+            "label": "Normal — every 6 shots, tightening to 3"
+          },
+          {
+            "value": "hard",
+            "label": "Hard — every 4 shots, tightening to 2"
+          }
+        ],
+        "defaultValue": "normal"
       },
       {
         "key": "popupPosition",

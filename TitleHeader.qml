@@ -6,6 +6,9 @@ Item {
   id: root
 
   property string sessionLine: ""
+  // Was hardcoded "◆ DAILY BOARD", which was wrong in random mode and had
+  // nowhere to say which difficulty the score beside it belongs to.
+  property string metaLine: "◆ DAILY BOARD"
   implicitWidth: Style.space(400)
   implicitHeight: titleBlock.implicitHeight + Style.space(6)
 
@@ -70,8 +73,14 @@ Item {
 
       Text {
         id: metaRow
+        // The score sits at the right of this same row, so the meta line gets
+        // whatever is left and elides rather than running underneath it.
+        anchors.left: parent.left
+        anchors.right: sessionText.left
+        anchors.rightMargin: Style.space(6)
+        elide: Text.ElideRight
         textFormat: Text.PlainText
-        text: "◆ DAILY BOARD"
+        text: root.metaLine
         color: Palette.neonDim
         font.family: Style.font.family
         font.pixelSize: Style.space(8)
@@ -79,6 +88,7 @@ Item {
       }
 
       Text {
+        id: sessionText
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText

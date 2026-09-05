@@ -106,6 +106,16 @@ Panel {
     return (v === "random") ? "random" : "daily"
   }
 
+  // Difficulty is the shape of the ceiling's descent and nothing else — the
+  // board is identical on all three, so the daily puzzle stays comparable.
+  // `difficultyChoice` is a session-only override for the D key: the manifest
+  // setting remains the persistent policy, and this plugin never writes to a
+  // configuration file.
+  property string difficultyChoice: ""
+  readonly property string difficultySetting: Engine.difficultyOf(setting("difficulty", "normal"))
+  readonly property string difficulty:
+    difficultyChoice !== "" ? Engine.difficultyOf(difficultyChoice) : difficultySetting
+
   readonly property int daySeed: Engine.boardTodaySeed()
   readonly property string debugPreviewScene: String(setting("debugPreviewScene", "off"))
   // Every frozen scene has to be listed here as well as in applyPreviewScene,
@@ -133,7 +143,13 @@ Panel {
     return "Neon Bubble Pop — Enter to play"
   }
 
-  readonly property string sessionLine: Scores.sessionLine(sessionStats, daySeed)
+  readonly property string sessionLine: Scores.sessionLine(sessionStats, daySeed, difficulty)
+
+  // The board kind and the ladder the score beside it belongs to. Both matter:
+  // BEST means nothing without knowing which curve produced it.
+  readonly property string metaLine:
+    "◆ " + (boardMode === "daily" ? "DAILY" : "RANDOM")
+    + "  ·  " + difficulty.toUpperCase()
 
   // A save that arrives while one is in flight is queued rather than forced.
   // running = false does not reap the child before the next statement, so the
@@ -166,7 +182,7 @@ Panel {
     // the number it started with.
     var seed = (boardMode === "daily") ? daySeed
              : ((Date.now() & 0x7fffffff) | 0)
-    gameState = Engine.create(seed, { daily: boardMode === "daily" })
+    gameState = Engine.create(seed, { daily: boardMode === "daily", difficulty: difficulty })
     phase = "play"
     lastRecorded = false
     lastRecordedScore = -1
@@ -184,6 +200,17 @@ Panel {
     lastRecordedScore = -1
   }
 
+  // Only between games: the curve is fixed when create() runs, so changing it
+  // mid-game would leave the run on the old cadence and file the score under
+  // the new ladder.
+  function cycleDifficulty() {
+    if (phase !== "menu" && phase !== "gameover") return
+    var order = Engine.difficultyNames()
+    var at = order.indexOf(difficulty)
+    difficultyChoice = order[(at + 1) % order.length]
+    if (sfxLoader.item) sfxLoader.item.play("wall")
+  }
+
   function resetHighScores() {
     sessionStats = Scores.reset(sessionStats)
     saveScores(Scores.serialize(sessionStats))
@@ -196,7 +223,7 @@ Panel {
     // and counted itself as another game.
     if (previewFrozen) return
     if (lastRecorded && lastRecordedScore === gameState.score) return
-    sessionStats = Scores.recordGame(sessionStats, gameState.score, daySeed)
+    sessionStats = Scores.recordGame(sessionStats, gameState.score, daySeed, difficulty)
     lastRecorded = true
     lastRecordedScore = gameState.score
     saveScores(Scores.serialize(sessionStats))
@@ -209,7 +236,10 @@ Panel {
 
   readonly property bool gameOverNewBest: {
     if (!gameState || gameState.phase !== "gameover") return false
-    return gameState.score >= sessionStats.best && gameState.score > 0
+    // Scores.best(), not sessionStats.best: bests moved into per-difficulty
+    // tracks, and reading the old top-level field gives undefined — which makes
+    // `score >= undefined` false and the NEW BEST banner never appear.
+    return gameState.score >= Scores.best(sessionStats, difficulty) && gameState.score > 0
   }
 
   function applyPreviewScene() {
@@ -403,6 +433,7 @@ Panel {
       onTextKey: function(t) {
         if (root.phase !== "menu" && root.phase !== "gameover") return
         if (t === "r" || t === "R") root.resetHighScores()
+        if (t === "d" || t === "D") root.cycleDifficulty()
       }
 
       onCloseRequested: root.close()
@@ -470,6 +501,7 @@ Panel {
         TitleHeader {
           width: parent.width
           sessionLine: root.sessionLine
+          metaLine: root.metaLine
         }
 
         Board {
@@ -480,6 +512,7 @@ Panel {
           gameOverScore: root.gameOverScoreLine
           gameOverSession: root.sessionLine
           gameOverNewBest: root.gameOverNewBest
+          difficulty: root.difficulty
         }
 
         Item {

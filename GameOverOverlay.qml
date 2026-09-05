@@ -100,11 +100,16 @@ Item {
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
       textFormat: Text.PlainText
-      text: "ENTER — play again   R — reset best"
+      // Three keys do not fit on one line at this width — the single-line
+      // version was clipped at both ends, losing the E of ENTER and the
+      // "best" off the end. Wrapping keeps the words rather than the layout.
+      text: "ENTER — play again   ·   D — difficulty
+R — reset best"
       color: Palette.neonBright
       font.family: Style.font.family
-      font.pixelSize: Style.space(10)
+      font.pixelSize: Style.space(9)
       font.letterSpacing: Style.space(1)
+      wrapMode: Text.WordWrap
 
       SequentialAnimation on opacity {
         running: root.active

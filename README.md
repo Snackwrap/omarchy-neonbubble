@@ -14,6 +14,7 @@ Click the **NB** pill to open the board. Middle-click resets to the menu.
 | **← →** | Aim (hold) |
 | **SPACE** | Fire |
 | **ENTER** | Start game / play again |
+| **D** | Cycle difficulty (menu or game over) |
 | **R** | Reset high-score tracker (menu or game over) |
 | **ESC** | Close |
 
@@ -51,6 +52,37 @@ a bar widget — you open it for a minute at a time — so a puzzle that resets
 daily suits it better than an endless one.
 
 Set `boardMode` to `random` for a fresh board every game.
+
+## Difficulty
+
+Three settings, and the only thing they change is **how fast the ceiling comes
+down**. The board is identical on all three — the daily puzzle has to be the
+same puzzle for everybody, or comparing scores on it stops meaning anything.
+
+| | Ceiling drops every | Tightening to | One shot faster every |
+|---|---|---|---|
+| Easy | 8 shots | 5 | 16 shots |
+| Normal | 6 shots | 3 | 10 shots |
+| Hard | 4 shots | 2 | 7 shots |
+
+The cadence used to be a flat six for a whole run, so the game never got harder
+— a player who survived the first minute had solved it and the rest was
+arithmetic. Now it tightens as you fire, down to a floor it never passes. The
+floor is what stops the ramp becoming a brick wall: below it there is no room
+left to build a cluster before the ceiling moves again.
+
+Measured over 120 games each with `tools/sim.mjs`:
+
+```
+easy    24.3 shots/game   2.9 ceiling descents
+normal  20.5 shots/game   3.6 ceiling descents
+hard    15.7 shots/game   4.8 ceiling descents
+```
+
+**Bests are kept per difficulty**, because a score is only comparable against
+another played on the same curve. `D` cycles it for the session; `difficulty`
+in the settings is the persistent choice. A score file written before difficulty
+existed migrates into `normal`, which is where the old fixed cadence started.
 
 ## What is checked, and against what
 
@@ -131,6 +163,7 @@ omarchy restart shell
 |---------|-----|---------|
 | Sound effects | `sound` | `true` |
 | Board | `boardMode` | `daily` — or `random` |
+| Difficulty | `difficulty` | `normal` — or `easy`, `hard` |
 | Popup position | `popupPosition` | `icon` |
 | Freeze a scene for a screenshot | `debugPreviewScene` | `off` |
 | Print the popup's own frame to the journal | `debugGeometry` | `false` |

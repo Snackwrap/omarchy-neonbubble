@@ -5,6 +5,8 @@ import "Palette.js" as Palette
 Item {
   id: root
   property bool active: false
+  // The ladder a game started from here will be filed under.
+  property string difficulty: "normal"
 
   anchors.fill: parent
   visible: opacity > 0.01
@@ -169,6 +171,18 @@ Item {
         NumberAnimation { from: 0.25; to: 1; duration: 620; easing.type: Easing.InOutQuad }
         NumberAnimation { from: 1; to: 0.25; duration: 620; easing.type: Easing.InOutQuad }
       }
+    }
+
+    Text {
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      textFormat: Text.PlainText
+      text: "D — DIFFICULTY: " + root.difficulty.toUpperCase()
+      color: Palette.gold
+      font.family: Style.font.family
+      font.pixelSize: Style.space(8)
+      font.letterSpacing: Style.space(2)
+      opacity: 0.75
     }
   }
 }

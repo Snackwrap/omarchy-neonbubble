@@ -33,7 +33,7 @@ function floatingCount(s) {
 function playGame(seed, opts = {}) {
   let rng = seed >>> 0
   const rand = () => (((rng = (rng * 1664525 + 1013904223) >>> 0) / 4294967296))
-  let s = G.create(seed, { daily: false })
+  let s = G.create(seed, { daily: false, difficulty: opts.difficulty })
 
   const stats = {
     shots: 0, pops: 0, drops: 0, descends: 0, cleared: 0,
@@ -146,6 +146,7 @@ if (argv.includes("--check")) {
   for (const m of checkDaily()) fail(m)
   for (const m of checkRules()) fail(m)
   for (const m of checkSpecials()) fail(m)
+  for (const m of checkDifficulty()) fail(m)
 
   console.log(bad ? `\n${bad} FAILED\n` : "\nall checks passed\n")
   process.exit(bad ? 1 : 0)
@@ -406,4 +407,73 @@ function checkRules() {
   ok(Math.abs(lim.angle - G.AIM_MAX) < 1e-6, `aiming right must stop at the limit, got ${lim.angle}`)
 
   return fails
+}
+
+// ------------------------------------------------------------- difficulty
+// The ramp is the whole point: DROP_EVERY used to be fixed for a whole run, so
+// a player who survived the first minute had solved the game. These check that
+// the curve exists, that it bottoms out rather than becoming a brick wall, and
+// that harder is measurably harder — not merely differently configured.
+function checkDifficulty() {
+  const out = []
+  const names = G.difficultyNames()
+  if (names.join(",") !== "easy,normal,hard") out.push(`difficultyNames() is ${names}`)
+
+  // An unknown or missing name must land on normal rather than throw: it comes
+  // off a stored setting a newer build might have written.
+  for (const bogus of ["", "IMPOSSIBLE", null, undefined]) {
+    const st = G.create(1, { difficulty: bogus })
+    if (st.difficulty !== "normal") out.push(`difficulty ${JSON.stringify(bogus)} became ${st.difficulty}`)
+  }
+
+  // The interval must actually tighten with shots fired, and must stop at the
+  // floor. Without a floor the ramp eventually drops the ceiling every shot,
+  // which leaves no room to build a cluster at all.
+  for (const name of names) {
+    const st = G.create(1, { difficulty: name })
+    const at = (n) => G.dropIntervalFor(Object.assign({}, st, { shots: n }))
+    if (at(0) !== st.dropEvery) out.push(`${name}: first interval is ${at(0)}, not ${st.dropEvery}`)
+    if (at(st.dropRamp) !== st.dropEvery - 1) out.push(`${name}: interval did not tighten after ${st.dropRamp} shots`)
+    if (at(100000) !== st.dropFloor) out.push(`${name}: interval bottoms out at ${at(100000)}, not ${st.dropFloor}`)
+    for (let n = 0; n < 400; n++) {
+      if (at(n) < st.dropFloor) { out.push(`${name}: interval fell below the floor at ${n} shots`); break }
+      if (n && at(n) > at(n - 1)) { out.push(`${name}: interval got looser at ${n} shots`); break }
+    }
+  }
+
+  // The curve has to survive snapshot(): step() runs off the object snapshot()
+  // returns, so a field left out makes the second shot of every game compute
+  // its cadence from undefined.
+  for (const name of names) {
+    const snap = G.snapshot(G.create(1, { difficulty: name }))
+    for (const k of ["difficulty", "dropEvery", "dropFloor", "dropRamp"]) {
+      if (snap[k] === undefined) out.push(`${name}: snapshot() drops ${k}`)
+    }
+  }
+
+  // And the end of it: harder must mean shorter games and more descents, over
+  // enough games that one lucky board cannot carry the result.
+  const N = 120
+  const runs = {}
+  for (const name of names) {
+    let shots = 0, descends = 0
+    for (let g = 0; g < N; g++) {
+      const { stats } = playGame(g * 7919 + 13, { difficulty: name })
+      shots += stats.shots
+      descends += stats.descends
+    }
+    runs[name] = { shots: shots / N, descends: descends / N }
+  }
+  if (!(runs.easy.shots > runs.normal.shots && runs.normal.shots > runs.hard.shots))
+    out.push(`games do not shorten with difficulty: ${names.map(n => n + " " + runs[n].shots.toFixed(1)).join(", ")}`)
+  if (!(runs.easy.descends < runs.normal.descends && runs.normal.descends < runs.hard.descends))
+    out.push(`the ceiling does not come down more often: ${names.map(n => n + " " + runs[n].descends.toFixed(1)).join(", ")}`)
+
+  // The board itself must not change with difficulty, or the daily puzzle stops
+  // being the same puzzle and comparing scores on it means nothing.
+  const board = (name) => JSON.stringify(G.create(20260904, { daily: true, difficulty: name }).grid)
+  if (board("easy") !== board("hard") || board("easy") !== board("normal"))
+    out.push("difficulty changed the board — the daily puzzle must be identical on all three")
+
+  return out
 }

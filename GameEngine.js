@@ -59,6 +59,12 @@ function difficultyOf(name) {
   return DIFFICULTIES[name] ? name : DEFAULT_DIFFICULTY
 }
 
+// Easiest first, so a caller cycling through them walks the curve in order
+// rather than in whatever order the object happens to enumerate.
+function difficultyNames() {
+  return ["easy", "normal", "hard"]
+}
+
 // The interval the ceiling is currently on. Derived from shots fired rather
 // than stored as a countdown of its own, so it cannot drift out of step with
 // the run and a snapshot carries no extra state to get wrong.
